@@ -2,16 +2,16 @@
 setlocal
 cd /d "%~dp0"
 
-where py >nul 2>&1
+where python >nul 2>&1
 if errorlevel 1 (
-    echo [ERROR] No se encontro Python. Instala Python 3.10 o superior desde python.org.
+    echo [ERROR] No se encontro Python en PATH. Instala Python 3.10 o superior desde python.org.
     pause
     exit /b 1
 )
 
 if not exist ".venv\Scripts\python.exe" (
     echo [INFO] Creando entorno virtual...
-    py -m venv .venv
+    python -m venv .venv
     if errorlevel 1 (
         echo [ERROR] No se pudo crear el entorno virtual.
         pause
