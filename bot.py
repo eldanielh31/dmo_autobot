@@ -47,6 +47,11 @@ TARGET_FRAME_MIN_BRIGHTNESS = 25.0
 # Umbral estricto: en 0% hay 0 píxeles; con vida hay >250 píxeles
 MIN_HP_RED_PIXELS = 50
 
+# Región central donde aparece el panel del menú del juego.
+MENU_PANEL_ROI = (0.30, 0.22, 0.70, 0.60)
+MENU_BLUE_PIXEL_RATIO = 0.50
+MENU_CLOSE_RETRY_INTERVAL = 0.75
+
 # ------------------------------------------------------------
 # TECLAS (Scan Codes DirectInput)
 # ------------------------------------------------------------
@@ -189,6 +194,20 @@ def check_target_status(sct: mss.MSS, client_rect: tuple[int, int, int, int]) ->
     return is_alive, red_count, frame_exists
 
 
+def is_game_menu_open(sct: mss.MSS, client_rect: tuple[int, int, int, int]) -> bool:
+    """Detecta el panel azul del menú de DMO en la zona central de la ventana."""
+    menu_roi = get_roi_rect(client_rect, MENU_PANEL_ROI)
+    raw_menu = np.asarray(sct.grab(menu_roi), dtype=np.uint8)
+    hsv_menu = cv2.cvtColor(raw_menu[:, :, :3], cv2.COLOR_BGR2HSV)
+    blue_mask = cv2.inRange(
+        hsv_menu,
+        np.array((90, 80, 20), dtype=np.uint8),
+        np.array((135, 255, 220), dtype=np.uint8),
+    )
+    blue_ratio = float(np.count_nonzero(blue_mask)) / blue_mask.size
+    return blue_ratio >= MENU_BLUE_PIXEL_RATIO
+
+
 # ============================================================
 # MÁQUINA DE ESTADOS Y BUCLE PRINCIPAL
 # ============================================================
@@ -211,8 +230,10 @@ def main():
     last_attack_time = 0.0
     last_tab_time = 0.0
     last_drag_time = 0.0
+    last_menu_escape_time = 0.0
     tab_attempts = 0
     is_mouse_down = False
+    menu_was_open = False
 
     auto_enabled = True
     pause_hotkey_was_down = False
@@ -256,9 +277,25 @@ def main():
 
             client_rect = get_client_screen_rect(hwnd)
             target_alive, red_pixels, frame_exists = check_target_status(sct, client_rect)
+            menu_open = is_game_menu_open(sct, client_rect)
             now = time.time()
 
-            if auto_enabled:
+            if menu_open:
+                if not menu_was_open:
+                    print("[MENÚ] Detectado; esperando a que se cierre.")
+                if is_mouse_down:
+                    mouse_right_up()
+                    is_mouse_down = False
+                state = State.SEARCHING_TAB
+                tab_attempts = 0
+                if now - last_menu_escape_time >= MENU_CLOSE_RETRY_INTERVAL:
+                    press_key_fast(KEY_ESC)
+                    last_menu_escape_time = now
+                menu_was_open = True
+            else:
+                menu_was_open = False
+
+            if auto_enabled and not menu_open:
                 if win32gui.GetForegroundWindow() != hwnd:
                     try:
                         win32gui.SetForegroundWindow(hwnd)
@@ -281,25 +318,27 @@ def main():
                         # Si quedó el marco pegado al 0%, deseleccionar con ESC
                         if frame_exists and not target_alive:
                             press_key_fast(KEY_ESC)
-
-                        # Pulsar TAB periódicamente para seleccionar otro
-                        if now - last_tab_time >= TAB_COOLDOWN:
-                            press_key_fast(KEY_TAB)
                             last_tab_time = now
-                            tab_attempts += 1
-
-                        # Si tras 2 intentos no engancha nada vivo, rotar cámara
-                        if tab_attempts >= 2:
-                            state = State.ROTATING_CAMERA
-                            state_start_time = now
                             tab_attempts = 0
+                        else:
+                            # Pulsar TAB periódicamente para seleccionar otro
+                            if now - last_tab_time >= TAB_COOLDOWN:
+                                press_key_fast(KEY_TAB)
+                                last_tab_time = now
+                                tab_attempts += 1
 
-                            # Iniciar arrastre con clic derecho
-                            cx = client_rect[0] + client_rect[2] // 2
-                            cy = client_rect[1] + client_rect[3] // 2
-                            ctypes.windll.user32.SetCursorPos(cx, cy)
-                            mouse_right_down()
-                            is_mouse_down = True
+                            # Si tras 2 intentos no engancha nada vivo, rotar cámara
+                            if tab_attempts >= 2:
+                                state = State.ROTATING_CAMERA
+                                state_start_time = now
+                                tab_attempts = 0
+
+                                # Iniciar arrastre con clic derecho
+                                cx = client_rect[0] + client_rect[2] // 2
+                                cy = client_rect[1] + client_rect[3] // 2
+                                ctypes.windll.user32.SetCursorPos(cx, cy)
+                                mouse_right_down()
+                                is_mouse_down = True
 
                 # --- 2. ROTANDO CÁMARA CON CLIC DERECHO ---
                 elif state == State.ROTATING_CAMERA:
@@ -334,11 +373,10 @@ def main():
                             last_attack_time = now
                     else:
                         # ¡ENEMIGO AL 0% O SIN BARRA!
-                        # 1. Deseleccionar el cadáver inmediatamente con ESC
+                        # ESC puede abrir el menú; no enviar más teclas en este ciclo.
                         press_key_fast(KEY_ESC)
-                        # 2. Pulsar TAB inmediatamente hacia el próximo objetivo
-                        press_key_fast(KEY_TAB)
                         last_tab_time = now
+                        tab_attempts = 0
                         state = State.SEARCHING_TAB
                         state_start_time = now
 
@@ -362,8 +400,11 @@ def main():
 
             # Telemetría en pantalla
             status_hp = "VIVO (> 0%)" if target_alive else ("MUERTO (0%)" if frame_exists else "SIN TARGET")
+            status_state = "MENÚ ABIERTO - CERRANDO" if menu_open else (
+                state if auto_enabled else "PAUSADO"
+            )
             cv2.rectangle(preview, (10, 10), (430, 85), (0, 0, 0), -1)
-            cv2.putText(preview, f"ESTADO: {state if auto_enabled else 'PAUSADO'}", (20, 35),
+            cv2.putText(preview, f"ESTADO: {status_state}", (20, 35),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             cv2.putText(preview, f"Vida: {status_hp} (Rojo: {red_pixels}px)", (20, 65),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.52, hp_color, 2)
