@@ -50,12 +50,10 @@ MIN_HP_RED_PIXELS = 50
 # Región central donde aparece el panel del menú del juego.
 MENU_PANEL_ROI = (0.30, 0.22, 0.70, 0.60)
 MENU_BLUE_PIXEL_RATIO = 0.50
-MENU_CLOSE_RETRY_INTERVAL = 0.75
 
 # ------------------------------------------------------------
 # TECLAS (Scan Codes DirectInput)
 # ------------------------------------------------------------
-KEY_ESC = 0x01  # Cancelar target / deseleccionar cadáver
 KEY_TAB = 0x0F  # Seleccionar objetivo más cercano
 KEY_1 = 0x02    # Habilidad / Ataque básico
 
@@ -230,7 +228,6 @@ def main():
     last_attack_time = 0.0
     last_tab_time = 0.0
     last_drag_time = 0.0
-    last_menu_escape_time = 0.0
     tab_attempts = 0
     is_mouse_down = False
     menu_was_open = False
@@ -282,15 +279,12 @@ def main():
 
             if menu_open:
                 if not menu_was_open:
-                    print("[MENÚ] Detectado; esperando a que se cierre.")
+                    print("[MENÚ] Detectado; automatización pausada hasta cerrarlo manualmente.")
                 if is_mouse_down:
                     mouse_right_up()
                     is_mouse_down = False
                 state = State.SEARCHING_TAB
                 tab_attempts = 0
-                if auto_enabled and now - last_menu_escape_time >= MENU_CLOSE_RETRY_INTERVAL:
-                    press_key_fast(KEY_ESC)
-                    last_menu_escape_time = now
                 menu_was_open = True
             else:
                 menu_was_open = False
@@ -315,30 +309,25 @@ def main():
                         tab_attempts = 0
                         press_key_fast(KEY_1)
                     else:
-                        # Si quedó el marco pegado al 0%, deseleccionar con ESC
-                        if frame_exists and not target_alive:
-                            press_key_fast(KEY_ESC)
+                        # No usar ESC: en DMO puede abrir el menú principal.
+                        # TAB basta para abandonar un objetivo sin vida.
+                        if now - last_tab_time >= TAB_COOLDOWN:
+                            press_key_fast(KEY_TAB)
                             last_tab_time = now
+                            tab_attempts += 1
+
+                        # Si tras 2 intentos no engancha nada vivo, rotar cámara
+                        if tab_attempts >= 2:
+                            state = State.ROTATING_CAMERA
+                            state_start_time = now
                             tab_attempts = 0
-                        else:
-                            # Pulsar TAB periódicamente para seleccionar otro
-                            if now - last_tab_time >= TAB_COOLDOWN:
-                                press_key_fast(KEY_TAB)
-                                last_tab_time = now
-                                tab_attempts += 1
 
-                            # Si tras 2 intentos no engancha nada vivo, rotar cámara
-                            if tab_attempts >= 2:
-                                state = State.ROTATING_CAMERA
-                                state_start_time = now
-                                tab_attempts = 0
-
-                                # Iniciar arrastre con clic derecho
-                                cx = client_rect[0] + client_rect[2] // 2
-                                cy = client_rect[1] + client_rect[3] // 2
-                                ctypes.windll.user32.SetCursorPos(cx, cy)
-                                mouse_right_down()
-                                is_mouse_down = True
+                            # Iniciar arrastre con clic derecho
+                            cx = client_rect[0] + client_rect[2] // 2
+                            cy = client_rect[1] + client_rect[3] // 2
+                            ctypes.windll.user32.SetCursorPos(cx, cy)
+                            mouse_right_down()
+                            is_mouse_down = True
 
                 # --- 2. ROTANDO CÁMARA CON CLIC DERECHO ---
                 elif state == State.ROTATING_CAMERA:
@@ -373,8 +362,8 @@ def main():
                             last_attack_time = now
                     else:
                         # ¡ENEMIGO AL 0% O SIN BARRA!
-                        # ESC puede abrir el menú; no enviar más teclas en este ciclo.
-                        press_key_fast(KEY_ESC)
+                        # Cambiar al siguiente objetivo sin abrir el menú con ESC.
+                        press_key_fast(KEY_TAB)
                         last_tab_time = now
                         tab_attempts = 0
                         state = State.SEARCHING_TAB
@@ -400,7 +389,7 @@ def main():
 
             # Telemetría en pantalla
             status_hp = "VIVO (> 0%)" if target_alive else ("MUERTO (0%)" if frame_exists else "SIN TARGET")
-            status_state = "MENÚ ABIERTO - CERRANDO" if menu_open else (
+            status_state = "MENÚ ABIERTO - CIERRE MANUAL" if menu_open else (
                 state if auto_enabled else "PAUSADO"
             )
             cv2.rectangle(preview, (10, 10), (430, 85), (0, 0, 0), -1)
