@@ -288,7 +288,7 @@ def main():
                     is_mouse_down = False
                 state = State.SEARCHING_TAB
                 tab_attempts = 0
-                if now - last_menu_escape_time >= MENU_CLOSE_RETRY_INTERVAL:
+                if auto_enabled and now - last_menu_escape_time >= MENU_CLOSE_RETRY_INTERVAL:
                     press_key_fast(KEY_ESC)
                     last_menu_escape_time = now
                 menu_was_open = True
