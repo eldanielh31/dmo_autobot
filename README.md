@@ -27,6 +27,8 @@ Internet para descargar las librerias.
 
 La ventana `DMO Farm Bot` muestra el estado detectado y la zona que se analiza.
 Al pausar, el bot libera el boton derecho del raton si estaba girando la camara.
+Si `Esc` abre el menu del juego, el bot lo detecta, lo cierra y espera a
+confirmar que desaparecio antes de volver a mover la camara o pulsar otras teclas.
 
 ## Ajustes
 
