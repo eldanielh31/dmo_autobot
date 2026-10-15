@@ -6,7 +6,7 @@ ventana del juego y automatiza la seleccion, el ataque y el giro de la camara.
 ## Requisitos
 
 - Windows 10 u 11.
-- Python 3.10 o superior, con el lanzador `py` disponible en PATH.
+- Python 3.10 o superior, disponible como `python` en PATH.
 - DMO abierto en una ventana cuyo titulo contenga `Client Version`.
 
 ## Instalacion y ejecucion
