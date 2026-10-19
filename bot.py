@@ -67,18 +67,27 @@ def key_down(hex_code: int):
     ii_ = Input_I()
     ii_.ki = KeyBdInput(0, hex_code, 0x0008, 0, ctypes.pointer(extra))
     x = Input(ctypes.c_ulong(1), ii_)
-    ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+    return ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x)) == 1
 
 def key_up(hex_code: int):
     extra = ctypes.c_ulong(0)
     ii_ = Input_I()
     ii_.ki = KeyBdInput(0, hex_code, 0x0008 | 0x0002, 0, ctypes.pointer(extra))
     x = Input(ctypes.c_ulong(1), ii_)
-    ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+    return ctypes.windll.user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x)) == 1
 
 def press_key_fast(hex_code: int):
-    key_down(hex_code)
-    key_up(hex_code)
+    down_sent = key_down(hex_code)
+    up_sent = key_up(hex_code)
+    if not down_sent or not up_sent:
+        logging.error(
+            "[ENTRADA] SendInput no insertó ambos eventos para scan code 0x%02X "
+            "(down=%s, up=%s).",
+            hex_code,
+            down_sent,
+            up_sent,
+        )
+    return down_sent and up_sent
 
 def is_key_down(virtual_key: int) -> bool:
     return bool(ctypes.windll.user32.GetAsyncKeyState(virtual_key) & 0x8000)
@@ -186,6 +195,7 @@ def main():
     last_target_status = None
     last_status_log = 0.0
     focus_warning_shown = False
+    attack_inputs_since_status = 0
 
     auto_enabled = True
     pause_hotkey_was_down = False
@@ -260,8 +270,10 @@ def main():
             if auto_enabled and not menu_open:
                 if win32gui.GetForegroundWindow() != hwnd:
                     try:
-                        win32gui.SetForegroundWindow(hwnd)
-                        focus_warning_shown = False
+                        focus_set = bool(win32gui.SetForegroundWindow(hwnd))
+                        if not focus_set and not focus_warning_shown:
+                            logging.warning("[VENTANA] Windows no confirmó el foco del juego.")
+                        focus_warning_shown = not focus_set
                     except Exception as exc:
                         if not focus_warning_shown:
                             logging.warning("[VENTANA] No se pudo dar foco al juego: %s", exc)
@@ -277,7 +289,8 @@ def main():
                         state_start_time = now
                         tab_attempts = 0
                         logging.info("[ESTADO] Objetivo con vida seleccionado; iniciando ataque.")
-                        press_key_fast(KEY_1)
+                        if press_key_fast(KEY_1):
+                            attack_inputs_since_status += 1
                     else:
                         if now - last_tab_time >= TAB_COOLDOWN:
                             press_key_fast(KEY_TAB)
@@ -304,7 +317,8 @@ def main():
                         state = State.ATTACKING
                         state_start_time = now
                         logging.info("[ESTADO] Objetivo con vida detectado al girar; iniciando ataque.")
-                        press_key_fast(KEY_1)
+                        if press_key_fast(KEY_1):
+                            attack_inputs_since_status += 1
                     else:
                         if now - last_drag_time >= DRAG_STEP_INTERVAL:
                             mouse_drag_relative(CAMERA_DRAG_STEP, 0)
@@ -321,7 +335,8 @@ def main():
 
                     if target_alive:
                         if now - last_attack_time >= ATTACK_KEY_INTERVAL:
-                            press_key_fast(KEY_1)
+                            if press_key_fast(KEY_1):
+                                attack_inputs_since_status += 1
                             last_attack_time = now
                     else:
                         press_key_fast(KEY_TAB)
@@ -334,7 +349,8 @@ def main():
             if now - last_status_log >= STATUS_LOG_INTERVAL:
                 logging.info(
                     "[RESUMEN] estado=%s automatización=%s objetivo=%s marco=%s "
-                    "rojos=%d TAB_pendientes=%d menú=%s clic_derecho=%s cliente=%dx%d",
+                    "rojos=%d TAB_pendientes=%d menú=%s clic_derecho=%s cliente=%dx%d "
+                    "foco_juego=%s tiempo_estado=%.1fs ataques_insertados=%d",
                     state,
                     "activa" if auto_enabled else "pausada",
                     "con vida" if target_alive else "sin vida detectable",
@@ -345,7 +361,11 @@ def main():
                     "presionado" if is_mouse_down else "suelto",
                     client_rect[2],
                     client_rect[3],
+                    "sí" if win32gui.GetForegroundWindow() == hwnd else "no",
+                    now - state_start_time,
+                    attack_inputs_since_status,
                 )
+                attack_inputs_since_status = 0
                 last_status_log = now
 
             full_roi = {"left": client_rect[0], "top": client_rect[1], "width": client_rect[2], "height": client_rect[3]}
