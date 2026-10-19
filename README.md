@@ -33,9 +33,20 @@ suelta el boton derecho hasta que lo cierres manualmente; despues reanuda.
 
 ## Ajustes
 
-Si la resolucion o la interfaz del juego difieren, revisa en `bot.py` los
-valores `TARGET_FRAME_ROI`, `HP_BAR_ROI`, `TARGET_FRAME_MIN_BRIGHTNESS` y
-`MIN_HP_RED_PIXELS`. Los ROI son coordenadas relativas al area cliente del juego.
+Para mover los recuadros de deteccion, edita en `bot.py` `TARGET_FRAME_ROI` y
+`HP_BAR_ROI`. Ambos usan la forma `(x1, y1, x2, y2)` con valores entre `0.0` y
+`1.0`, relativos al area cliente del juego (no a la ventana de vista previa):
+
+- `TARGET_FRAME_ROI`: recuadro exterior del panel superior del objetivo; se usa
+  para detectar si hay un objetivo seleccionado.
+- `HP_BAR_ROI`: recuadro interior sobre la barra roja; se usa para medir su vida.
+
+Subir `x1` o `x2` mueve los bordes horizontales hacia la derecha; subir `y1` o
+`y2` los mueve hacia abajo. Por ejemplo, aumentar ambos valores `y` desplaza el
+recuadro hacia abajo. Si cambias la resolucion o la interfaz, ajusta ambos
+recuadros mirando las cajas dibujadas en `DMO Farm Bot`. Los umbrales
+`TARGET_FRAME_MIN_BRIGHTNESS` y `MIN_HP_RED_PIXELS` controlan la deteccion, no
+la posicion.
 
 ## Dependencias
 
