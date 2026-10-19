@@ -19,6 +19,12 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
+if not exist ".env" (
+    echo [INFO] Creando .env para credenciales opcionales de Telegram...
+    >".env" echo TELEGRAM_BOT_TOKEN=
+    >>".env" echo TELEGRAM_CHAT_ID=
+)
+
 echo [INFO] Instalando o actualizando dependencias...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 (
