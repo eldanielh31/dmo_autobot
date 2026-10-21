@@ -80,8 +80,10 @@ Subir `x1` o `x2` mueve los bordes horizontales hacia la derecha; subir `y1` o
 recuadro hacia abajo. Si cambias la resolucion o la interfaz, ajusta ambos
 recuadros mirando las cajas dibujadas en `DMO Farm Bot`. El umbral
 `TARGET_FRAME_MIN_BRIGHTNESS` y `MIN_HP_RED_PIXELS` en `config.py` controlan la
-deteccion del marco y el rojo de la barra. Se considera vacia si no quedan
-pixeles que pasen el filtro rojo.
+deteccion del marco y el rojo de la barra. El rojo disperso se descarta para
+evitar que elementos de la escena o artefactos se confundan con vida; la barra
+debe tener una distribucion compacta de pixeles rojos. Se considera vacia si
+no quedan pixeles rojos fiables.
 
 ## Dependencias
 

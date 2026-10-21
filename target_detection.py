@@ -49,6 +49,23 @@ def get_roi_slice(frame: np.ndarray, roi: RelativeROI) -> np.ndarray:
     ]
 
 
+def _count_reliable_red_pixels(red_mask: np.ndarray) -> int:
+    red_pixels = int(np.count_nonzero(red_mask))
+    if red_pixels == 0:
+        return 0
+
+    ys, xs = np.where(red_mask)
+    width = int(xs.max() - xs.min() + 1)
+    height = int(ys.max() - ys.min() + 1)
+    if width <= 0 or height <= 0:
+        return 0
+
+    fill_ratio = red_pixels / float(width * height)
+    if fill_ratio < 0.20:
+        return 0
+    return red_pixels
+
+
 def check_target_status(frame: np.ndarray) -> TargetStatus:
     target_banner = get_roi_slice(frame, TARGET_FRAME_ROI)
     gray_banner = cv2.cvtColor(target_banner, cv2.COLOR_BGR2GRAY)
@@ -59,7 +76,7 @@ def check_target_status(frame: np.ndarray) -> TargetStatus:
     green = hp_bar[:, :, 1].astype(np.int16)
     blue = hp_bar[:, :, 0].astype(np.int16)
     red_mask = (red > 105) & (red > green + 25) & (red > blue + 25)
-    red_pixels = int(np.count_nonzero(red_mask))
+    red_pixels = _count_reliable_red_pixels(red_mask)
     return TargetStatus(banner_visible=banner_visible, red_pixels=red_pixels)
 
 
