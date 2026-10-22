@@ -3,6 +3,8 @@ import logging
 
 import win32gui
 
+from config import VK_CONTROL, VK_MENU, VK_P, VK_SHIFT
+
 PUL = ctypes.POINTER(ctypes.c_ulong)
 _active_scan_codes: set[int] = set()
 
@@ -98,6 +100,14 @@ def release_all_keys() -> None:
 
 def is_key_down(virtual_key: int) -> bool:
     return bool(ctypes.windll.user32.GetAsyncKeyState(virtual_key) & 0x8000)
+
+
+def is_pause_hotkey_down() -> bool:
+    return (
+        is_key_down(VK_CONTROL)
+        and is_key_down(VK_P)
+        and (is_key_down(VK_MENU) or is_key_down(VK_SHIFT))
+    )
 
 
 MOUSEEVENTF_MOVE = 0x0001

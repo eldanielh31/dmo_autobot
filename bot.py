@@ -5,6 +5,10 @@ import threading
 import time
 from queue import Queue
 
+from dependency_bootstrap import ensure_runtime_dependencies
+
+ensure_runtime_dependencies()
+
 import cv2
 import mss
 import numpy as np
@@ -31,8 +35,6 @@ from config import (
     PREVIEW_SCALE,
     STATUS_LOG_INTERVAL,
     VK_CONTROL,
-    VK_MENU,
-    VK_P,
     VK_Q,
     VK_SHIFT,
     WINDOW_TITLE_CONTAINS,
@@ -41,6 +43,7 @@ from game_input import (
     find_window,
     get_client_screen_rect,
     is_key_down,
+    is_pause_hotkey_down,
     mouse_drag_relative,
     mouse_right_down,
     mouse_right_up,
@@ -58,7 +61,9 @@ from target_detection import (
 )
 
 WINDOW_NAME = "DMO Farm Bot"
-HOTKEYS_MESSAGE = "Ctrl+Alt+P: pausar/reanudar | Ctrl+Shift+Q: detener"
+HOTKEYS_MESSAGE = (
+    "Ctrl+Alt+P o Ctrl+Shift+P: pausar/reanudar | Ctrl+Shift+Q: detener"
+)
 
 
 def configure_logging() -> None:
@@ -228,11 +233,7 @@ def main() -> None:
         with mss.MSS() as sct:
             while True:
                 loop_start = time.time()
-                pause_hotkey_down = (
-                    is_key_down(VK_CONTROL)
-                    and is_key_down(VK_MENU)
-                    and is_key_down(VK_P)
-                )
+                pause_hotkey_down = is_pause_hotkey_down()
                 stop_hotkey_down = (
                     is_key_down(VK_CONTROL)
                     and is_key_down(VK_SHIFT)

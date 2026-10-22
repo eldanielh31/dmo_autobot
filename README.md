@@ -6,18 +6,20 @@ ventana del juego y automatiza la seleccion, el ataque y el giro de la camara.
 ## Requisitos
 
 - Windows 10 u 11.
-- Python 3.10 o superior, disponible como `python` en PATH.
+- Python 3.10 o superior, disponible como `python3` en PATH.
 - DMO abierto en una ventana cuyo titulo contenga `Client Version`.
 
 ## Instalacion y ejecucion
 
 1. Descarga o clona este repositorio.
-2. Abre DMO y entra al juego.
-3. Ejecuta `ejecutar_bot.bat`.
+2. Abre una terminal en la carpeta del proyecto.
+3. Abre DMO y entra al juego.
+4. Ejecuta `python3 bot.py`.
 
-El archivo crea un entorno virtual local `.venv`, instala las dependencias de
-`requirements.txt` y ejecuta `bot.py`. La primera ejecucion requiere conexion a
-Internet para descargar las librerias.
+Si faltan dependencias, `bot.py` las instala desde `requirements.txt` para el
+Python que ejecutó el comando; la primera ejecución requiere conexión a
+Internet. También puedes usar `ejecutar_bot.bat` para ejecutarlo dentro de un
+entorno virtual.
 
 ## Flujo de farmeo
 
@@ -38,7 +40,7 @@ anti-macro viven respectivamente en `target_detection.py`, `game_input.py`,
 
 ## Controles
 
-- **Ctrl+Alt+P**: pausar o reanudar desde cualquier ventana.
+- **Ctrl+Alt+P** o **Ctrl+Shift+P**: pausar o reanudar desde cualquier ventana.
 - **Ctrl+Shift+Q**: detener el bot. La terminal permanece abierta.
 
 La ventana `DMO Farm Bot` muestra el estado detectado y la zona que se analiza.
