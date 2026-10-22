@@ -261,7 +261,7 @@ def load_telegram_credentials(env_path: Path = ENV_FILE) -> tuple[str, str]:
 
     if env_path.exists():
         try:
-            for line in env_path.read_text(encoding="utf-8").splitlines():
+            for line in env_path.read_text(encoding="utf-8-sig").splitlines():
                 stripped = line.strip()
                 if not stripped or stripped.startswith("#") or "=" not in stripped:
                     continue

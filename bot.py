@@ -5,6 +5,10 @@ import threading
 import time
 from queue import Queue
 
+from self_update import update_on_start
+
+update_on_start()
+
 from dependency_bootstrap import ensure_runtime_dependencies
 
 ensure_runtime_dependencies()

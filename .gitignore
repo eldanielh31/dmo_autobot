@@ -3,3 +3,5 @@ __pycache__/
 *.py[cod]
 .env
 debug/antimacro_*.png
+.dmo_bot_update.json
+.dmo_bot_update_backups/

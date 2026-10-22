@@ -21,6 +21,17 @@ Python que ejecutó el comando; la primera ejecución requiere conexión a
 Internet. También puedes usar `ejecutar_bot.bat` para ejecutarlo dentro de un
 entorno virtual.
 
+## Actualizaciones automáticas
+
+Al abrir el bot, este comprueba si hay una versión nueva en la rama `main` de
+GitHub. Las copias clonadas se actualizan con Git únicamente si no tienen
+cambios locales pendientes y la actualización puede aplicarse como fast-forward.
+Las instalaciones descargadas como ZIP descargan la versión nueva y guardan una
+copia de los archivos que reemplazan en `.dmo_bot_update_backups/`. En ambos
+casos se conservan `.env`, `.venv` y `debug/`. Se necesita conexión a Internet;
+si la comprobación o actualización falla, se muestra un aviso y se inicia la
+versión instalada.
+
 ## Flujo de farmeo
 
 1. Busca un enemigo con **TAB**.
