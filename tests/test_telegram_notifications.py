@@ -7,10 +7,14 @@ from unittest.mock import Mock, patch
 
 import requests
 
+import cv2
+import numpy as np
+
 from antimacro import (
     load_telegram_credentials,
     send_telegram_message,
     send_telegram_photo,
+    send_telegram_status_photo,
 )
 
 
@@ -79,6 +83,60 @@ class TelegramNotificationTests(unittest.TestCase):
                 send_telegram_photo(screenshot, "test-token", "12345")
 
         self.assertIn("Falló el envío", captured.output[0])
+        self.assertNotIn("test-token", captured.output[0])
+
+    def test_status_notification_sends_top_left_game_crop_as_photo(self) -> None:
+        response = Mock()
+        response.json.return_value = {"ok": True}
+        frame = np.zeros((768, 1366, 3), dtype=np.uint8)
+        frame[30, 80] = (25, 100, 220)
+
+        with patch("antimacro.requests.post", return_value=response) as post:
+            send_telegram_status_photo(
+                frame,
+                "Macro iniciado\nHora: ahora",
+                "test-token",
+                "-5076045131",
+            )
+
+        args, kwargs = post.call_args
+        self.assertEqual(
+            args[0],
+            "https://api.telegram.org/bottest-token/sendPhoto",
+        )
+        self.assertEqual(
+            kwargs["data"],
+            {"chat_id": "-5076045131", "caption": "Macro iniciado\nHora: ahora"},
+        )
+        filename, content, mime_type = kwargs["files"]["photo"]
+        self.assertEqual(filename, "game_hud.png")
+        self.assertEqual(mime_type, "image/png")
+        decoded = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(decoded.shape, (177, 478, 3))
+        self.assertTrue(np.array_equal(decoded[30, 80], frame[30, 80]))
+        response.raise_for_status.assert_called_once_with()
+
+    def test_status_photo_logs_api_error_without_token(self) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "ok": False,
+            "description": "Bad Request: chat not found",
+        }
+
+        with (
+            patch("antimacro.requests.post", return_value=response),
+            self.assertLogs(level=logging.ERROR) as captured,
+        ):
+            send_telegram_status_photo(
+                np.zeros((768, 1366, 3), dtype=np.uint8),
+                "Macro iniciado",
+                "test-token",
+                "-5076045131",
+            )
+
+        self.assertIn("-5076045131", captured.output[0])
+        self.assertIn("chat not found", captured.output[0])
         self.assertNotIn("test-token", captured.output[0])
 
     def test_send_message_posts_status_to_telegram(self) -> None:

@@ -40,8 +40,9 @@ Para compartir notificaciones e historial en Telegram:
 3. En `.env`, configura ese ID como `TELEGRAM_CHAT_ID`.
 4. Cierra y vuelve a abrir la terminal y el bot para descartar variables de
    entorno obsoletas. El valor de `.env` tiene prioridad sobre cualquier
-   `TELEGRAM_CHAT_ID` heredado por la terminal. En el grupo aparecerán mensajes
-   de inicio/cierre y la captura completa cuando se detecte el aviso anti-macro.
+   `TELEGRAM_CHAT_ID` heredado por la terminal. En el grupo aparecerán fotos
+   recortadas del HUD al iniciar y cerrar, y la captura completa cuando se
+   detecte el aviso anti-macro.
 5. Consulta el historial local completo con `/logs`.
 
 El historial SQLite se guarda en `.dmo_bot_telegram_logs.sqlite3` y registra

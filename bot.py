@@ -29,6 +29,7 @@ from antimacro import (
     save_antimacro_screenshot,
     send_telegram_message,
     send_telegram_photo,
+    send_telegram_status_photo,
     start_ocr_worker,
 )
 from combat import CombatActions, CombatController
@@ -273,6 +274,7 @@ def main() -> None:
             telegram_event_log = None
 
     startup_notification_sent = False
+    last_frame: np.ndarray | None = None
     try:
         with mss.MSS() as sct:
             while True:
@@ -312,14 +314,19 @@ def main() -> None:
                 }
                 raw_screen = np.asarray(sct.grab(screen_rect), dtype=np.uint8)
                 frame = cv2.cvtColor(raw_screen, cv2.COLOR_BGRA2BGR)
+                last_frame = frame
                 if (
                     not startup_notification_sent
                     and telegram_token
                     and telegram_chat_id
                 ):
-                    send_telegram_message(
+                    caption = (
                         "🟢 Macro iniciado\n"
-                        f"Hora: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+                        f"Hora: {datetime.now().astimezone().isoformat(timespec='seconds')}"
+                    )
+                    send_telegram_status_photo(
+                        frame,
+                        caption,
                         telegram_token,
                         telegram_chat_id,
                     )
@@ -528,7 +535,15 @@ def main() -> None:
                     "cerrado",
                     "Macro cerrado.",
                 )
-            send_telegram_message(message, telegram_token, telegram_chat_id)
+            if last_frame is not None:
+                send_telegram_status_photo(
+                    last_frame,
+                    message,
+                    telegram_token,
+                    telegram_chat_id,
+                )
+            else:
+                send_telegram_message(message, telegram_token, telegram_chat_id)
 
 
 if __name__ == "__main__":

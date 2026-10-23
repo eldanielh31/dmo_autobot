@@ -331,6 +331,55 @@ def _telegram_request_error(error: Exception) -> str:
     return type(error).__name__
 
 
+def send_telegram_status_photo(
+    frame: np.ndarray,
+    caption: str,
+    token: str,
+    chat_id: str,
+) -> None:
+    if frame.ndim != 3 or frame.shape[2] != 3:
+        logging.error("[TELEGRAM] No se pudo enviar la captura: formato de imagen inválido.")
+        return
+
+    height, width = frame.shape[:2]
+    if height == 0 or width == 0:
+        logging.error("[TELEGRAM] No se pudo enviar la captura: imagen vacía.")
+        return
+
+    crop_width = min(width, max(420, round(width * 0.35)))
+    crop_height = min(height, max(160, round(height * 0.23)))
+    hud_crop = frame[:crop_height, :crop_width]
+    try:
+        encoded, image_data = cv2.imencode(".png", hud_crop)
+        if not encoded:
+            logging.error("[TELEGRAM] No se pudo codificar la captura del juego.")
+            return
+
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data={"chat_id": chat_id, "caption": caption},
+            files={"photo": ("game_hud.png", image_data.tobytes(), "image/png")},
+            timeout=TELEGRAM_API_TIMEOUT,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict) or not result.get("ok", False):
+            logging.error(
+                "[TELEGRAM] La API rechazó la captura para chat_id=%s: %s",
+                chat_id,
+                _telegram_api_description(result),
+            )
+            return
+        logging.info("[TELEGRAM] Captura del juego enviada a chat_id=%s.", chat_id)
+    except (cv2.error, requests.RequestException, ValueError) as exc:
+        logging.error(
+            "[TELEGRAM] Falló el envío de la captura a chat_id=%s (%s: %s).",
+            chat_id,
+            type(exc).__name__,
+            _telegram_request_error(exc),
+        )
+
+
 def send_telegram_photo(
     screenshot_path: Path,
     token: str,
