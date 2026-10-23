@@ -20,6 +20,11 @@ LONG_POLL_TIMEOUT = int(TELEGRAM_COMMAND_POLL_TIMEOUT)
 MAX_TELEGRAM_MESSAGE_LENGTH = 3900
 
 
+def format_local_datetime(value: datetime | None = None) -> str:
+    timestamp = value or datetime.now().astimezone()
+    return timestamp.astimezone().strftime("%d/%m/%Y %H:%M:%S")
+
+
 class TelegramEventLog:
     def __init__(self, database_path: Path = TELEGRAM_LOG_DATABASE_PATH) -> None:
         self.database_path = database_path
@@ -209,7 +214,8 @@ class TelegramCommandListener:
     ) -> None:
         heading = f"Historial global ({len(events)} eventos):\n"
         lines = [
-            f"{created_at} | {event}: {details}".rstrip()
+            f"{format_local_datetime(datetime.fromisoformat(created_at))} | "
+            f"{event}: {details}".rstrip()
             for created_at, event, details in events
         ]
         chunks: list[str] = []

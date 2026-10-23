@@ -4,7 +4,6 @@ import logging
 import sqlite3
 import threading
 import time
-from datetime import datetime
 from queue import Queue
 
 from self_update import update_on_start
@@ -63,6 +62,7 @@ from telegram_logs import (
     LONG_POLL_TIMEOUT,
     TelegramCommandListener,
     TelegramEventLog,
+    format_local_datetime,
 )
 from target_detection import (
     MenuOpenConfirmation,
@@ -322,7 +322,7 @@ def main() -> None:
                 ):
                     caption = (
                         "🟢 Macro iniciado\n"
-                        f"Hora: {datetime.now().astimezone().isoformat(timespec='seconds')}"
+                        f"Hora: {format_local_datetime()}"
                     )
                     send_telegram_status_photo(
                         frame,
@@ -371,7 +371,7 @@ def main() -> None:
                                     telegram_token,
                                     telegram_chat_id,
                                     "⚠️ Reto anti-macro detectado.\n"
-                                    f"Hora: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+                                    f"Hora: {format_local_datetime()}",
                                 ),
                                 name="antimacro-telegram",
                                 daemon=True,
@@ -528,7 +528,7 @@ def main() -> None:
         if telegram_token and telegram_chat_id:
             message = (
                 "🔴 Macro cerrado\n"
-                f"Hora: {datetime.now().astimezone().isoformat(timespec='seconds')}"
+                f"Hora: {format_local_datetime()}"
             )
             if telegram_event_log:
                 telegram_event_log.record(

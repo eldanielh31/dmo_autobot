@@ -2,10 +2,30 @@ import tempfile
 import sqlite3
 import unittest
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from telegram_logs import TelegramCommandListener, TelegramEventLog
+from telegram_logs import (
+    TelegramCommandListener,
+    TelegramEventLog,
+    format_local_datetime,
+)
+
+
+class TelegramTimestampTests(unittest.TestCase):
+    def test_formats_local_datetime_as_day_month_year_and_24_hour_time(self) -> None:
+        timestamp = datetime(
+            2026,
+            10,
+            22,
+            19,
+            56,
+            44,
+            tzinfo=timezone(timedelta(hours=-6)),
+        )
+
+        self.assertEqual(format_local_datetime(timestamp), "22/10/2026 19:56:44")
 
 
 class TelegramEventLogTests(unittest.TestCase):
@@ -83,6 +103,7 @@ class TelegramCommandListenerTests(unittest.TestCase):
         sent_chat_id, sent_text = send_message.call_args.args
         self.assertEqual(sent_chat_id, "-100123")
         self.assertIn("Historial global (2 eventos)", sent_text)
+        self.assertRegex(sent_text, r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}")
         self.assertIn("Started.", sent_text)
         self.assertIn("Stopped.", sent_text)
 
