@@ -23,7 +23,11 @@ PRESERVED_DIRECTORIES = {
     "debug",
     BACKUP_DIRECTORY,
 }
-PRESERVED_FILES = {".env", UPDATE_STATE}
+PRESERVED_FILES = {
+    ".env",
+    UPDATE_STATE,
+    ".dmo_bot_telegram_logs.sqlite3",
+}
 REQUEST_TIMEOUT = 20
 
 

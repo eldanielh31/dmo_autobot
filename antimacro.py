@@ -249,6 +249,7 @@ def save_antimacro_screenshot(frame: np.ndarray) -> Path | None:
 
 
 def load_telegram_credentials(env_path: Path = ENV_FILE) -> tuple[str, str]:
+    file_values: dict[str, str] = {}
     if not env_path.exists():
         try:
             env_path.write_text(
@@ -268,24 +269,80 @@ def load_telegram_credentials(env_path: Path = ENV_FILE) -> tuple[str, str]:
                 key, value = stripped.split("=", 1)
                 key = key.removeprefix("export ").strip()
                 value = value.strip().strip("\"'")
-                if key in {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"} and not os.getenv(key):
-                    os.environ[key] = value
+                if key in {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"}:
+                    file_values[key] = value
         except OSError as exc:
             logging.error("[TELEGRAM] No se pudo leer %s: %s", env_path, exc)
 
     return (
-        os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
-        os.getenv("TELEGRAM_CHAT_ID", "").strip(),
+        (
+            file_values.get("TELEGRAM_BOT_TOKEN")
+            or os.getenv("TELEGRAM_BOT_TOKEN", "")
+        ).strip(),
+        (
+            file_values.get("TELEGRAM_CHAT_ID")
+            or os.getenv("TELEGRAM_CHAT_ID", "")
+        ).strip(),
     )
 
 
-def send_telegram_photo(screenshot_path: Path, token: str, chat_id: str) -> None:
+def send_telegram_message(message: str, token: str, chat_id: str) -> None:
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        response = requests.post(
+            url,
+            data={"chat_id": chat_id, "text": message},
+            timeout=TELEGRAM_API_TIMEOUT,
+        )
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict) or not result.get("ok", False):
+            logging.error(
+                "[TELEGRAM] La API rechazó el mensaje para chat_id=%s: %s",
+                chat_id,
+                _telegram_api_description(result),
+            )
+            return
+        logging.info("[TELEGRAM] Notificación de estado enviada.")
+    except (requests.RequestException, ValueError) as exc:
+        logging.error(
+            "[TELEGRAM] Falló el envío de la notificación a chat_id=%s (%s: %s).",
+            chat_id,
+            type(exc).__name__,
+            _telegram_request_error(exc),
+        )
+
+
+def _telegram_api_description(payload: object) -> str:
+    if isinstance(payload, dict):
+        description = payload.get("description")
+        if isinstance(description, str) and description:
+            return description[:300]
+    return "respuesta no válida de Telegram"
+
+
+def _telegram_request_error(error: Exception) -> str:
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        try:
+            payload = error.response.json()
+        except ValueError:
+            return f"HTTP {error.response.status_code}"
+        return _telegram_api_description(payload)
+    return type(error).__name__
+
+
+def send_telegram_photo(
+    screenshot_path: Path,
+    token: str,
+    chat_id: str,
+    caption: str = "Alerta: reto anti-macro detectado.",
+) -> None:
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     try:
         with screenshot_path.open("rb") as photo:
             response = requests.post(
                 url,
-                data={"chat_id": chat_id, "caption": "Alerta: reto anti-macro detectado."},
+                data={"chat_id": chat_id, "caption": caption},
                 files={"photo": (screenshot_path.name, photo, "image/png")},
                 timeout=TELEGRAM_API_TIMEOUT,
             )
