@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 import time
 from queue import Queue
+
+from self_update import update_on_start
+
+update_on_start()
 
 from dependency_bootstrap import ensure_runtime_dependencies
 
@@ -21,7 +26,9 @@ from antimacro import (
     load_antimacro_header,
     load_telegram_credentials,
     save_antimacro_screenshot,
+    send_telegram_message,
     send_telegram_photo,
+    send_telegram_status_photo,
     start_ocr_worker,
 )
 from combat import CombatActions, CombatController
@@ -50,6 +57,12 @@ from game_input import (
     press_key_fast,
     release_all_keys,
     set_cursor_position,
+)
+from telegram_logs import (
+    LONG_POLL_TIMEOUT,
+    TelegramCommandListener,
+    TelegramEventLog,
+    format_local_datetime,
 )
 from target_detection import (
     MenuOpenConfirmation,
@@ -196,6 +209,11 @@ def main() -> None:
         logging.warning(
             "[TELEGRAM] Sin credenciales configuradas; la captura solo se guardará localmente."
         )
+    else:
+        logging.info(
+            "[TELEGRAM] Destino de notificaciones configurado: chat_id=%s",
+            telegram_chat_id,
+        )
 
     controller = CombatController()
     menu_confirmation = MenuOpenConfirmation()
@@ -229,6 +247,34 @@ def main() -> None:
     alarm_thread.start()
     ocr_thread = start_ocr_worker(ocr_frames, ocr_detection, ocr_shutdown)
 
+    telegram_event_log: TelegramEventLog | None = None
+    telegram_command_shutdown: threading.Event | None = None
+    telegram_command_thread: threading.Thread | None = None
+    if telegram_token and telegram_chat_id:
+        try:
+            telegram_event_log = TelegramEventLog()
+            command_listener = TelegramCommandListener(
+                telegram_token,
+                telegram_chat_id,
+                telegram_event_log,
+            )
+            telegram_command_shutdown = threading.Event()
+            telegram_command_thread = threading.Thread(
+                target=command_listener.run,
+                args=(telegram_command_shutdown,),
+                name="telegram-commands",
+                daemon=True,
+            )
+            telegram_command_thread.start()
+        except (OSError, sqlite3.Error) as exc:
+            logging.error(
+                "[TELEGRAM] No se pudo iniciar el historial/comandos (%s).",
+                type(exc).__name__,
+            )
+            telegram_event_log = None
+
+    startup_notification_sent = False
+    last_frame: np.ndarray | None = None
     try:
         with mss.MSS() as sct:
             while True:
@@ -268,6 +314,28 @@ def main() -> None:
                 }
                 raw_screen = np.asarray(sct.grab(screen_rect), dtype=np.uint8)
                 frame = cv2.cvtColor(raw_screen, cv2.COLOR_BGRA2BGR)
+                last_frame = frame
+                if (
+                    not startup_notification_sent
+                    and telegram_token
+                    and telegram_chat_id
+                ):
+                    caption = (
+                        "🟢 Macro iniciado\n"
+                        f"Hora: {format_local_datetime()}"
+                    )
+                    send_telegram_status_photo(
+                        frame,
+                        caption,
+                        telegram_token,
+                        telegram_chat_id,
+                    )
+                    if telegram_event_log:
+                        telegram_event_log.record(
+                            "iniciado",
+                            "Macro iniciado.",
+                        )
+                    startup_notification_sent = True
                 enqueue_latest_frame(ocr_frames, frame)
                 antimacro_present = is_antimacro_present(frame, ocr_detection.is_set())
 
@@ -289,10 +357,22 @@ def main() -> None:
                             window_title,
                             screenshot_path or "no disponible",
                         )
+                        if telegram_token and telegram_chat_id:
+                            if telegram_event_log:
+                                telegram_event_log.record(
+                                    "anti-macro",
+                                    "Reto anti-macro detectado.",
+                                )
                         if screenshot_path and telegram_token and telegram_chat_id:
                             threading.Thread(
                                 target=send_telegram_photo,
-                                args=(screenshot_path, telegram_token, telegram_chat_id),
+                                args=(
+                                    screenshot_path,
+                                    telegram_token,
+                                    telegram_chat_id,
+                                    "⚠️ Reto anti-macro detectado.\n"
+                                    f"Hora: {format_local_datetime()}",
+                                ),
                                 name="antimacro-telegram",
                                 daemon=True,
                             ).start()
@@ -440,7 +520,30 @@ def main() -> None:
         ocr_shutdown.set()
         alarm_thread.join(timeout=1.0)
         ocr_thread.join(timeout=2.0)
+        if telegram_command_shutdown:
+            telegram_command_shutdown.set()
+        if telegram_command_thread:
+            telegram_command_thread.join(timeout=LONG_POLL_TIMEOUT + 5)
         cv2.destroyAllWindows()
+        if telegram_token and telegram_chat_id:
+            message = (
+                "🔴 Macro cerrado\n"
+                f"Hora: {format_local_datetime()}"
+            )
+            if telegram_event_log:
+                telegram_event_log.record(
+                    "cerrado",
+                    "Macro cerrado.",
+                )
+            if last_frame is not None:
+                send_telegram_status_photo(
+                    last_frame,
+                    message,
+                    telegram_token,
+                    telegram_chat_id,
+                )
+            else:
+                send_telegram_message(message, telegram_token, telegram_chat_id)
 
 
 if __name__ == "__main__":

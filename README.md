@@ -21,6 +21,41 @@ Python que ejecutó el comando; la primera ejecución requiere conexión a
 Internet. También puedes usar `ejecutar_bot.bat` para ejecutarlo dentro de un
 entorno virtual.
 
+## Actualizaciones automáticas
+
+Al abrir el bot, este comprueba si hay una versión nueva en la rama `main` de
+GitHub. Las copias clonadas se actualizan con Git únicamente si no tienen
+cambios locales pendientes y la actualización puede aplicarse como fast-forward.
+Las instalaciones descargadas como ZIP descargan la versión nueva y guardan una
+copia de los archivos que reemplazan en `.dmo_bot_update_backups/`. En ambos
+casos se conservan `.env`, `.venv` y `debug/`. Se necesita conexión a Internet;
+si la comprobación o actualización falla, se muestra un aviso y se inicia la
+versión instalada.
+
+Para compartir notificaciones e historial en Telegram:
+
+1. Crea un grupo, agrega el bot de Telegram y a los suscriptores.
+2. Inicia el programa una vez y envía `/chatid` en el grupo. Copia el ID que
+   responde el bot.
+3. En `.env`, configura ese ID como `TELEGRAM_CHAT_ID`.
+4. Cierra y vuelve a abrir la terminal y el bot para descartar variables de
+   entorno obsoletas. El valor de `.env` tiene prioridad sobre cualquier
+   `TELEGRAM_CHAT_ID` heredado por la terminal. En el grupo aparecerán fotos
+   recortadas del HUD al iniciar y cerrar, y la captura completa cuando se
+   detecte el aviso anti-macro.
+5. Consulta el historial local completo con `/logs`.
+
+El historial SQLite se guarda en `.dmo_bot_telegram_logs.sqlite3` y registra
+eventos desde que se instala esta función. Incluye únicamente inicio, cierre y
+detección anti-macro. `/logs` y `/chatid` solo responden en el grupo configurado;
+los comandos enviados en chats privados se ignoran.
+
+Debe haber una sola instancia del programa usando el token a la vez, porque
+Telegram permite un único receptor `getUpdates` por bot. El historial es local
+a esa computadora; para agregar eventos de varias computadoras hace falta un
+servicio central compartido. El cierre se notifica al salir con el atajo o
+Ctrl+C; un corte de energía o cierre forzado no permite enviar la notificación.
+
 ## Flujo de farmeo
 
 1. Busca un enemigo con **TAB**.

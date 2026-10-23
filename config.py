@@ -38,5 +38,9 @@ ANTIMACRO_CLEAR_DELAY: Final[float] = 3.0
 ANTIMACRO_ALARM_RELEASE_DELAY: Final[float] = 0.35
 ANTIMACRO_SCREENSHOT_DIR: Final[Path] = Path(__file__).resolve().parent / "debug"
 ENV_FILE: Final[Path] = Path(__file__).resolve().with_name(".env")
+TELEGRAM_LOG_DATABASE_PATH: Final[Path] = Path(__file__).resolve().with_name(
+    ".dmo_bot_telegram_logs.sqlite3"
+)
 TELEGRAM_API_TIMEOUT: Final[float] = 15.0
+TELEGRAM_COMMAND_POLL_TIMEOUT: Final[float] = 10.0
 ANTIMACRO_OCR_INTERVAL: Final[float] = 0.5
