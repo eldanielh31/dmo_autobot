@@ -72,6 +72,40 @@ class TelegramNotificationTests(unittest.TestCase):
         self.assertEqual(kwargs["timeout"], 15.0)
         response.raise_for_status.assert_called_once_with()
 
+    def test_send_photo_crops_antimacro_dialog_and_encodes_jpeg(self) -> None:
+        response = Mock()
+        response.json.return_value = {"ok": True}
+        frame = np.full((768, 1366, 3), (70, 80, 90), dtype=np.uint8)
+        frame[170:485, 930:1180] = (20, 30, 40)
+        frame[400:415, 950:1170] = (0, 255, 255)
+
+        with patch("antimacro.requests.post", return_value=response) as post:
+            send_telegram_photo(frame, "test-token", "-5076045131")
+
+        _, kwargs = post.call_args
+        filename, content, mime_type = kwargs["files"]["photo"]
+        self.assertEqual(filename, "antimacro.jpg")
+        self.assertEqual(mime_type, "image/jpeg")
+        decoded = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(decoded.shape, (356, 286, 3))
+        self.assertTrue(np.allclose(decoded[53, 83], (20, 30, 40), atol=5))
+        response.raise_for_status.assert_called_once_with()
+
+    def test_send_photo_keeps_full_frame_when_timer_bar_is_not_found(self) -> None:
+        response = Mock()
+        response.json.return_value = {"ok": True}
+        frame = np.zeros((768, 1366, 3), dtype=np.uint8)
+
+        with patch("antimacro.requests.post", return_value=response) as post:
+            send_telegram_photo(frame, "test-token", "-5076045131")
+
+        _, kwargs = post.call_args
+        _, content, mime_type = kwargs["files"]["photo"]
+        self.assertEqual(mime_type, "image/jpeg")
+        decoded = cv2.imdecode(np.frombuffer(content, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertEqual(decoded.shape, frame.shape)
+        response.raise_for_status.assert_called_once_with()
+
     def test_send_photo_logs_api_failure_without_raising(self) -> None:
         response = Mock()
         response.raise_for_status.side_effect = requests.HTTPError("rejected")

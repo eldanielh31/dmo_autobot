@@ -70,6 +70,21 @@ class CombatControllerTests(unittest.TestCase):
         self.assertFalse(actions.attack)
         self.assertEqual(self.controller.state, CombatState.SEARCHING)
 
+    def test_missing_banner_keeps_tabbing_then_rotates_until_target_is_found(self) -> None:
+        self.controller.state = CombatState.ATTACKING
+
+        lost_target = self.controller.update(TargetStatus(False, 70), 10.0)
+        first_search = self.controller.update(TargetStatus(False, 70), 10.01)
+        second_search = self.controller.update(TargetStatus(False, 70), 10.26)
+
+        self.assertTrue(lost_target.press_tab)
+        self.assertTrue(first_search.press_tab)
+        self.assertFalse(first_search.start_rotation)
+        self.assertTrue(second_search.press_tab)
+        self.assertTrue(second_search.start_rotation)
+        self.assertTrue(second_search.drag_camera)
+        self.assertEqual(self.controller.state, CombatState.ROTATING)
+
     def test_empty_bar_while_searching_does_not_start_attack(self) -> None:
         actions = self.controller.update(TargetStatus(True, 0), 10.0)
 

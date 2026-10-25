@@ -18,6 +18,7 @@ import cv2
 import mss
 import numpy as np
 import win32gui
+from mss.exception import ScreenShotError
 
 from antimacro import (
     alarm_worker,
@@ -274,6 +275,7 @@ def main() -> None:
             telegram_event_log = None
 
     startup_notification_sent = False
+    capture_warning_active = False
     last_frame: np.ndarray | None = None
     try:
         with mss.MSS() as sct:
@@ -312,7 +314,27 @@ def main() -> None:
                     "width": client_rect[2],
                     "height": client_rect[3],
                 }
-                raw_screen = np.asarray(sct.grab(screen_rect), dtype=np.uint8)
+                try:
+                    raw_screen = np.asarray(sct.grab(screen_rect), dtype=np.uint8)
+                except ScreenShotError as exc:
+                    if not capture_warning_active:
+                        logging.warning(
+                            "[CAPTURA] Windows no permitió capturar la pantalla "
+                            "(%s). Se pausaron las entradas y se reintentará.",
+                            exc,
+                        )
+                        if mouse_is_down:
+                            mouse_right_up()
+                            mouse_is_down = False
+                        release_all_keys()
+                        controller.reset_search()
+                        state_started_at = time.time()
+                        capture_warning_active = True
+                    time.sleep(0.5)
+                    continue
+                if capture_warning_active:
+                    logging.info("[CAPTURA] Captura de pantalla recuperada.")
+                    capture_warning_active = False
                 frame = cv2.cvtColor(raw_screen, cv2.COLOR_BGRA2BGR)
                 last_frame = frame
                 if (
@@ -350,6 +372,19 @@ def main() -> None:
                             mouse_right_up()
                             mouse_is_down = False
                         release_all_keys()
+                        if telegram_token and telegram_chat_id:
+                            threading.Thread(
+                                target=send_telegram_photo,
+                                args=(
+                                    frame,
+                                    telegram_token,
+                                    telegram_chat_id,
+                                    "⚠️ Reto anti-macro detectado.\n"
+                                    f"Hora: {format_local_datetime()}",
+                                ),
+                                name="antimacro-telegram",
+                                daemon=True,
+                            ).start()
                         screenshot_path = save_antimacro_screenshot(frame)
                         logging.critical(
                             "[ANTI-MACRO] Detectado en '%s'; entradas bloqueadas. "
@@ -363,19 +398,6 @@ def main() -> None:
                                     "anti-macro",
                                     "Reto anti-macro detectado.",
                                 )
-                        if screenshot_path and telegram_token and telegram_chat_id:
-                            threading.Thread(
-                                target=send_telegram_photo,
-                                args=(
-                                    screenshot_path,
-                                    telegram_token,
-                                    telegram_chat_id,
-                                    "⚠️ Reto anti-macro detectado.\n"
-                                    f"Hora: {format_local_datetime()}",
-                                ),
-                                name="antimacro-telegram",
-                                daemon=True,
-                            ).start()
                     else:
                         alarm_active.set()
                 elif antimacro_locked:

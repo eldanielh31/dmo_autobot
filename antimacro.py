@@ -381,26 +381,74 @@ def send_telegram_status_photo(
 
 
 def send_telegram_photo(
-    screenshot_path: Path,
+    screenshot: Path | np.ndarray,
     token: str,
     chat_id: str,
     caption: str = "Alerta: reto anti-macro detectado.",
 ) -> None:
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     try:
-        with screenshot_path.open("rb") as photo:
+        if isinstance(screenshot, np.ndarray):
+            if screenshot.ndim != 3 or screenshot.shape[2] != 3:
+                logging.error(
+                    "[TELEGRAM] No se pudo enviar la captura: formato de imagen inválido."
+                )
+                return
+            height, width = screenshot.shape[:2]
+            if height == 0 or width == 0:
+                logging.error("[TELEGRAM] No se pudo enviar la captura: imagen vacía.")
+                return
+
+            timer_bars = find_timer_bars(screenshot)
+            image_crop = screenshot
+            filename = "antimacro.jpg"
+            mime_type = "image/jpeg"
+            if timer_bars:
+                timer_x, timer_y, timer_width, timer_height = timer_bars[0]
+                horizontal_padding = round(timer_width * 0.15)
+                top_padding = round(timer_width * 1.15)
+                bottom_padding = round(timer_width * 0.4)
+                left = max(0, timer_x - horizontal_padding)
+                right = min(
+                    width,
+                    timer_x + timer_width + horizontal_padding,
+                )
+                top = max(0, timer_y - top_padding)
+                bottom = min(
+                    height,
+                    timer_y + timer_height + bottom_padding,
+                )
+                image_crop = screenshot[top:bottom, left:right]
+
+            encoded, image_data = cv2.imencode(
+                ".jpg",
+                image_crop,
+                [cv2.IMWRITE_JPEG_QUALITY, 85],
+            )
+            if not encoded:
+                logging.error("[TELEGRAM] No se pudo codificar la captura anti-macro.")
+                return
+            photo_file = (filename, image_data.tobytes(), mime_type)
             response = requests.post(
                 url,
                 data={"chat_id": chat_id, "caption": caption},
-                files={"photo": (screenshot_path.name, photo, "image/png")},
+                files={"photo": photo_file},
                 timeout=TELEGRAM_API_TIMEOUT,
             )
+        else:
+            with screenshot.open("rb") as photo:
+                response = requests.post(
+                    url,
+                    data={"chat_id": chat_id, "caption": caption},
+                    files={"photo": (screenshot.name, photo, "image/png")},
+                    timeout=TELEGRAM_API_TIMEOUT,
+                )
         response.raise_for_status()
         if not response.json().get("ok", False):
             logging.error("[TELEGRAM] La API rechazó el envío de la captura.")
             return
         logging.info("[TELEGRAM] Captura del reto enviada.")
-    except (OSError, requests.RequestException, ValueError) as exc:
+    except (OSError, cv2.error, requests.RequestException, ValueError) as exc:
         logging.error(
             "[TELEGRAM] Falló el envío de la captura (%s).",
             type(exc).__name__,

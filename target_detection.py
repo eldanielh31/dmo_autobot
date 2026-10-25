@@ -9,7 +9,6 @@ from config import (
     MENU_BLUE_PIXEL_RATIO,
     MENU_PANEL_ROI,
     MIN_HP_RED_PIXELS,
-    TARGET_FRAME_MIN_BRIGHTNESS,
     TARGET_FRAME_ROI,
 )
 
@@ -43,6 +42,11 @@ class MenuOpenConfirmation:
 def get_roi_slice(frame: np.ndarray, roi: RelativeROI) -> np.ndarray:
     frame_height, frame_width = frame.shape[:2]
     x1, y1, x2, y2 = roi
+    if not (0 <= x1 < x2 <= 1 and 0 <= y1 < y2 <= 1):
+        raise ValueError(
+            f"ROI inválido {roi}: se espera (x1, y1, x2, y2) "
+            "con 0 <= x1 < x2 <= 1 y 0 <= y1 < y2 <= 1."
+        )
     return frame[
         int(frame_height * y1):int(frame_height * y2),
         int(frame_width * x1):int(frame_width * x2),
@@ -66,10 +70,29 @@ def _count_reliable_red_pixels(red_mask: np.ndarray) -> int:
     return red_pixels
 
 
+def _has_target_banner(target_banner: np.ndarray) -> bool:
+    hsv_banner = cv2.cvtColor(target_banner, cv2.COLOR_BGR2HSV)
+    blue_mask = cv2.inRange(
+        hsv_banner,
+        np.array((90, 120, 60), dtype=np.uint8),
+        np.array((135, 255, 255), dtype=np.uint8),
+    )
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(
+        blue_mask,
+        connectivity=8,
+    )
+    min_width = target_banner.shape[1] * 0.40
+    min_height = target_banner.shape[0] * 0.40
+    return any(
+        stats[index, cv2.CC_STAT_WIDTH] >= min_width
+        and stats[index, cv2.CC_STAT_HEIGHT] >= min_height
+        for index in range(1, component_count)
+    )
+
+
 def check_target_status(frame: np.ndarray) -> TargetStatus:
     target_banner = get_roi_slice(frame, TARGET_FRAME_ROI)
-    gray_banner = cv2.cvtColor(target_banner, cv2.COLOR_BGR2GRAY)
-    banner_visible = float(np.mean(gray_banner)) >= TARGET_FRAME_MIN_BRIGHTNESS
+    banner_visible = _has_target_banner(target_banner)
 
     hp_bar = get_roi_slice(frame, HP_BAR_ROI)
     red = hp_bar[:, :, 2].astype(np.int16)

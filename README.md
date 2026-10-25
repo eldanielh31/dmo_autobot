@@ -41,8 +41,8 @@ Para compartir notificaciones e historial en Telegram:
 4. Cierra y vuelve a abrir la terminal y el bot para descartar variables de
    entorno obsoletas. El valor de `.env` tiene prioridad sobre cualquier
    `TELEGRAM_CHAT_ID` heredado por la terminal. En el grupo aparecerán fotos
-   recortadas del HUD al iniciar y cerrar, y la captura completa cuando se
-   detecte el aviso anti-macro.
+   recortadas del HUD al iniciar y cerrar, y un recorte ligero del cuadro
+   anti-macro cuando se detecte el aviso. La captura completa se guarda localmente.
 5. Consulta el historial local completo con `/logs`.
 
 El historial SQLite se guarda en `.dmo_bot_telegram_logs.sqlite3` y registra
@@ -72,6 +72,10 @@ solo el banner y la barra roja determinan si se ataca o se busca. La logica de
 transiciones esta separada en `combat.py`; vision, controles, configuracion y
 anti-macro viven respectivamente en `target_detection.py`, `game_input.py`,
 `config.py` y `antimacro.py`.
+El banner solo se considera visible si aparece el contorno azul conectado del
+HUD del objetivo; el brillo del escenario, nombres sobre enemigos o texto rojo
+no bastan. Si desaparece, el bot vuelve a pulsar TAB y, tras dos intentos sin
+una barra de vida valida, gira la camara hasta encontrar un objetivo.
 
 ## Controles
 
@@ -88,13 +92,19 @@ Si detecta el aviso anti-macro, bloquea las entradas del juego, muestra una
 sirena local repetida y guarda una captura del momento en `debug/`. La sirena
 se detiene cuando el aviso lleva 0.35 segundos sin detectarse; el bot espera
 tres segundos antes de reanudar la búsqueda. Resuelve el aviso manualmente.
+Si Windows deniega temporalmente la captura de pantalla, el bot libera las
+entradas y reintenta cada medio segundo; no ejecuta acciones hasta recuperar una
+captura nueva.
 Si se dispone de una captura de la cabecera, guardala como
 `antimacro_header.png` junto a `bot.py` para habilitar la deteccion por
 plantilla; sin ella se ubica el dialogo por su barra amarilla y OCR. Al iniciar,
 el programa crea `.env` si no existe. Para recibir la captura actual por
 Telegram, completa
 `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`; `.env` está excluido de Git. La
-captura se guarda localmente y se envía de forma asíncrona.
+captura completa se guarda localmente. Telegram recibe de forma asíncrona un
+recorte JPEG ligero centrado en el cuadro del reto, localizado mediante su barra
+amarilla; si no se encuentra esa barra, se envía la imagen completa para no
+recortar el cuadro por error.
 La detección anti-macro usa la barra amarilla para ubicar el encabezado del
 diálogo en cualquier parte de la ventana y lo reconoce con el OCR integrado de
 Windows; no depende de una posición fija. Sus bindings se instalan desde
@@ -116,11 +126,10 @@ Subir `x1` o `x2` mueve los bordes horizontales hacia la derecha; subir `y1` o
 `y2` los mueve hacia abajo. Por ejemplo, aumentar ambos valores `y` desplaza el
 recuadro hacia abajo. Si cambias la resolucion o la interfaz, ajusta ambos
 recuadros mirando las cajas dibujadas en `DMO Farm Bot`. El umbral
-`TARGET_FRAME_MIN_BRIGHTNESS` y `MIN_HP_RED_PIXELS` en `config.py` controlan la
-deteccion del marco y el rojo de la barra. El rojo disperso se descarta para
-evitar que elementos de la escena o artefactos se confundan con vida; la barra
-debe tener una distribucion compacta de pixeles rojos. Se considera vacia si
-no quedan pixeles rojos fiables.
+`MIN_HP_RED_PIXELS` en `config.py` controla el minimo de rojo fiable necesario
+para considerar que el objetivo tiene vida. El rojo disperso se descarta para
+evitar que elementos de la escena o artefactos se confundan con vida; se
+considera vacia si no quedan pixeles rojos fiables.
 
 ## Dependencias
 
