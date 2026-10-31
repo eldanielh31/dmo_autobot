@@ -74,8 +74,8 @@ def _has_target_banner(target_banner: np.ndarray) -> bool:
     hsv_banner = cv2.cvtColor(target_banner, cv2.COLOR_BGR2HSV)
     blue_mask = cv2.inRange(
         hsv_banner,
-        np.array((90, 120, 60), dtype=np.uint8),
-        np.array((135, 255, 255), dtype=np.uint8),
+        np.array((90, 120, 45), dtype=np.uint8),
+        np.array((179, 255, 255), dtype=np.uint8),
     )
     component_count, _, stats, _ = cv2.connectedComponentsWithStats(
         blue_mask,

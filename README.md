@@ -72,10 +72,11 @@ solo el banner y la barra roja determinan si se ataca o se busca. La logica de
 transiciones esta separada en `combat.py`; vision, controles, configuracion y
 anti-macro viven respectivamente en `target_detection.py`, `game_input.py`,
 `config.py` y `antimacro.py`.
-El banner solo se considera visible si aparece el contorno azul conectado del
-HUD del objetivo; el brillo del escenario, nombres sobre enemigos o texto rojo
-no bastan. Si desaparece, el bot vuelve a pulsar TAB y, tras dos intentos sin
-una barra de vida valida, gira la camara hasta encontrar un objetivo.
+El banner se considera visible si aparece el contorno conectado del HUD del
+objetivo, incluso cuando un aviso tiñe de rojo el contorno azul. El brillo del
+escenario, nombres sobre enemigos o texto rojo aislado no bastan. Si desaparece,
+el bot vuelve a pulsar TAB y, tras dos intentos sin una barra de vida valida,
+gira la camara hasta encontrar un objetivo.
 
 ## Controles
 

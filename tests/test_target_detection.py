@@ -62,6 +62,23 @@ class TargetDetectionTests(unittest.TestCase):
 
         self.assertTrue(status.banner_visible)
 
+    def test_red_screen_tint_does_not_hide_target_banner(self) -> None:
+        tint = np.zeros_like(self.target_banner)
+        tint[:] = (0, 0, 120)
+        self.target_banner[:] = cv2.addWeighted(
+            self.target_banner,
+            0.10,
+            tint,
+            0.90,
+            0,
+        )
+        self.hp_bar[3:9, 15:65] = (0, 0, 200)
+
+        status = check_target_status(self.frame)
+
+        self.assertTrue(status.banner_visible)
+        self.assertTrue(status.has_life)
+
     def test_user_sampled_red_life_colors_are_detected(self) -> None:
         self.hp_bar[4, 10:13] = [
             (24, 34, 129),
