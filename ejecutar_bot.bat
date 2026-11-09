@@ -38,4 +38,3 @@ echo [INFO] Iniciando bot...
 if errorlevel 1 (
     echo [ERROR] El bot finalizo con un error.
 )
-pause

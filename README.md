@@ -32,7 +32,11 @@ casos se conservan `.env`, `.venv` y `debug/`. Se necesita conexión a Internet;
 si la comprobación o actualización falla, se muestra un aviso y se inicia la
 versión instalada.
 
-Para compartir notificaciones e historial en Telegram:
+Para compartir notificaciones e historial en Telegram, ejecuta el programa
+normalmente. Telegram esta activado de forma predeterminada. Agrega
+`--notelegram` al comando para desactivar todos los envios y la recepcion de
+comandos; por ejemplo, `python3 bot.py --notelegram` o
+`.venv\Scripts\python.exe bot.py --notelegram`.
 
 1. Crea un grupo, agrega el bot de Telegram y a los suscriptores.
 2. Inicia el programa una vez y envía `/chatid` en el grupo. Copia el ID que
@@ -53,14 +57,18 @@ los comandos enviados en chats privados se ignoran.
 Debe haber una sola instancia del programa usando el token a la vez, porque
 Telegram permite un único receptor `getUpdates` por bot. El historial es local
 a esa computadora; para agregar eventos de varias computadoras hace falta un
-servicio central compartido. El cierre se notifica al salir con el atajo o
-Ctrl+C; un corte de energía o cierre forzado no permite enviar la notificación.
+servicio central compartido. El cierre se notifica al salir con el atajo; al
+usar Ctrl+C, el bot prioriza cerrar inmediatamente y no espera ni envía la
+notificación final.
 
 ## Flujo de farmeo
 
 1. Busca un enemigo con **TAB**.
-2. Si no encuentra una barra de vida, vuelve a intentar y gira la camara para
-   ampliar la busqueda.
+2. Si no encuentra una barra de vida, vuelve a intentar y gira la camara. Si
+   tras cinco segundos de giro no encuentra un objetivo, camina en un pequeno
+   circuito mas amplio con WASD mientras sigue girando la camara durante
+   dieciseis segundos. Cada tramo dura dos segundos antes de cambiar de
+   direccion y luego continua la busqueda.
 3. Cuando detecta el banner y una barra roja con vida, detiene el giro y ataca
    con **1**.
 4. Sigue atacando mientras haya rojo en la barra. Si el banner desaparece,
@@ -72,16 +80,34 @@ solo el banner y la barra roja determinan si se ataca o se busca. La logica de
 transiciones esta separada en `combat.py`; vision, controles, configuracion y
 anti-macro viven respectivamente en `target_detection.py`, `game_input.py`,
 `config.py` y `antimacro.py`.
-El banner se considera visible si aparece el contorno conectado del HUD del
-objetivo, incluso cuando un aviso tiñe de rojo el contorno azul. El brillo del
-escenario, nombres sobre enemigos o texto rojo aislado no bastan. Si desaparece,
-el bot vuelve a pulsar TAB y, tras dos intentos sin una barra de vida valida,
-gira la camara hasta encontrar un objetivo.
+Un objetivo solo es válido para atacar si se detecta el banner azul del HUD y
+una franja roja continua en la zona de vida. Un fondo azul que cubre toda el
+área del banner, colores anaranjados del escenario o píxeles rojos aislados no
+bastan. La detección mide el relleno central de la barra y no confunde su
+contorno rojo con vida; el umbral permite reconocer incluso una barra casi vacía.
+Si el banner está presente pero no hay vida roja válida, el bot sigue buscando
+y no inicia el ataque.
+
+Opcionalmente, inicia con `python3 bot.py --metalgreymon-only` para atacar solo
+cuando el OCR de Windows lee `MetalGreymon` en el nombre del banner. El filtro
+acepta el texto opcional `(Líder)` y requiere que el nombre leído corresponda
+al banner visible actual. El comportamiento normal, que no filtra por especie,
+sigue siendo el predeterminado. Para ajustar el recorte del nombre o el
+escalado usado para leerlo, cambia `TARGET_NAME_ROI` y `TARGET_NAME_OCR_SCALE`
+en `config.py`; la región del nombre es relativa a `TARGET_FRAME_ROI`.
+Después de seleccionar un objetivo, el bot espera a que el banner y la vida se
+estabilicen antes de volver a pulsar TAB; con el filtro de nombre activo, también
+espera hasta dos segundos por el resultado del OCR del banner actual.
 
 ## Controles
 
 - **Ctrl+Alt+P** o **Ctrl+Shift+P**: pausar o reanudar desde cualquier ventana.
-- **Ctrl+Shift+Q**: detener el bot. La terminal permanece abierta.
+- **Ctrl+Shift+Q**: detener el bot.
+- **Ctrl+C** en la terminal: cerrar el bot. Con `ejecutar_bot.bat`, la ventana
+  se cerrara al terminar; ya no queda esperando una tecla.
+
+Si ejecutas `bot.py` desde una terminal existente, esta vuelve al prompt al
+terminar. Al iniciarlo con `ejecutar_bot.bat`, la ventana se cierra al salir.
 
 La ventana `DMO Farm Bot` muestra el estado detectado y la zona que se analiza.
 Al pausar, el bot libera el boton derecho del raton si estaba girando la camara.
@@ -127,10 +153,13 @@ Subir `x1` o `x2` mueve los bordes horizontales hacia la derecha; subir `y1` o
 `y2` los mueve hacia abajo. Por ejemplo, aumentar ambos valores `y` desplaza el
 recuadro hacia abajo. Si cambias la resolucion o la interfaz, ajusta ambos
 recuadros mirando las cajas dibujadas en `DMO Farm Bot`. El umbral
-`MIN_HP_RED_PIXELS` en `config.py` controla el minimo de rojo fiable necesario
-para considerar que el objetivo tiene vida. El rojo disperso se descarta para
-evitar que elementos de la escena o artefactos se confundan con vida; se
-considera vacia si no quedan pixeles rojos fiables.
+`MIN_HP_RED_PIXELS` en `config.py` controla el minimo de rojo necesario para
+considerar que el objetivo tiene vida; su valor predeterminado es 6. Los
+rellenos muy estrechos se validan por su altura, forma y densidad para reconocer
+el 1% de vida sin contar ruido rojo aislado. `CAMERA_SEARCH_TURN_DURATION`,
+`WALK_SEARCH_DURATION` y `WALK_SEARCH_STEP_DURATION` ajustan el tiempo de giro y
+la busqueda con WASD. La vida detectada por debajo del umbral se trata como
+barra vacia.
 
 ## Dependencias
 

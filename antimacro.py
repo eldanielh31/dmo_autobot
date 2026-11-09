@@ -23,13 +23,16 @@ from config import (
     ANTIMACRO_OCR_INTERVAL,
     ANTIMACRO_SCREENSHOT_DIR,
     ENV_FILE,
+    TARGET_NAME_OCR_SCALE,
     TELEGRAM_API_TIMEOUT,
 )
+from target_detection import get_target_name_region, get_target_name_signature
 
 _header_template: np.ndarray | None = None
+MAX_CONSECUTIVE_OCR_ERRORS = 3
 
 
-def load_antimacro_header() -> None:
+def load_antimacro_header() -> bool:
     global _header_template
     _header_template = cv2.imread(str(ANTIMACRO_HEADER_PATH), cv2.IMREAD_COLOR)
     if _header_template is None:
@@ -37,8 +40,10 @@ def load_antimacro_header() -> None:
             "[ANTI-MACRO] No se encontró %s; se usará detección por color y OCR.",
             ANTIMACRO_HEADER_PATH,
         )
-    else:
-        logging.info("[ANTI-MACRO] Plantilla cargada: %s", ANTIMACRO_HEADER_PATH)
+        return False
+
+    logging.info("[ANTI-MACRO] Plantilla cargada: %s", ANTIMACRO_HEADER_PATH)
+    return True
 
 
 def find_timer_bars(frame: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -81,15 +86,56 @@ def is_antimacro_text_present(recognized_text: str) -> bool:
     normalized = unicodedata.normalize("NFKD", recognized_text)
     normalized = normalized.encode("ascii", "ignore").decode("ascii").lower()
     words = re.findall(r"[a-z0-9]+", normalized)
+    compact_text = "".join(words)
     antimacro_found = any(
         SequenceMatcher(None, word, "antimacro").ratio() >= 0.85
         for word in words
-    )
+    ) or "antimacro" in compact_text
     activated_found = any(
         SequenceMatcher(None, word, "activado").ratio() >= 0.85
         for word in words
-    )
+    ) or "activado" in compact_text
     return antimacro_found and activated_found
+
+
+def is_metalgreymon_text_present(recognized_text: str) -> bool:
+    normalized = unicodedata.normalize("NFKD", recognized_text)
+    normalized = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    words = re.findall(r"[a-z0-9]+", normalized)
+    compact_text = "".join(words)
+    if "metalgreymon" in compact_text:
+        return True
+    for start in range(len(words)):
+        for end in range(start + 1, min(start + 4, len(words) + 1)):
+            candidate = "".join(words[start:end])
+            if SequenceMatcher(None, candidate, "metalgreymon").ratio() >= 0.88:
+                return True
+    return False
+
+
+async def recognize_target_name(
+    frame: np.ndarray,
+    ocr: OcrEngine,
+) -> tuple[bytes, bool]:
+    name_region = get_target_name_region(frame)
+    signature = get_target_name_signature(frame)
+    enlarged = cv2.resize(
+        name_region,
+        None,
+        fx=TARGET_NAME_OCR_SCALE,
+        fy=TARGET_NAME_OCR_SCALE,
+        interpolation=cv2.INTER_CUBIC,
+    )
+    recognized_text = await recognize_text(enlarged, ocr)
+    return signature, is_metalgreymon_text_present(recognized_text)
+
+
+def is_antimacro_monitor_ready(
+    template_loaded: bool,
+    ocr_ready: threading.Event,
+    ocr_unavailable: threading.Event,
+) -> bool:
+    return template_loaded or (ocr_ready.is_set() and not ocr_unavailable.is_set())
 
 
 async def recognize_text(image: np.ndarray, ocr: OcrEngine) -> str:
@@ -133,27 +179,41 @@ def _ocr_worker(
     frames: Queue[np.ndarray],
     detection: threading.Event,
     shutdown: threading.Event,
+    ready: threading.Event,
+    unavailable: threading.Event,
+    target_name_results: Queue[tuple[bytes, bool]] | None = None,
 ) -> None:
     try:
         ocr = OcrEngine.try_create_from_user_profile_languages()
     except (OSError, RuntimeError) as exc:
         logging.error("[OCR] No se pudo inicializar Windows OCR (%s).", type(exc).__name__)
+        unavailable.set()
         return
     if ocr is None:
         logging.error(
             "[OCR] Windows no tiene un paquete de reconocimiento compatible con los idiomas del usuario."
         )
+        unavailable.set()
         return
-    logging.info("[OCR] Windows OCR listo; idioma=%s.", ocr.recognizer_language.language_tag)
-    loop = asyncio.new_event_loop()
+    try:
+        language_tag = ocr.recognizer_language.language_tag
+        loop = asyncio.new_event_loop()
+    except (OSError, RuntimeError) as exc:
+        logging.error("[OCR] No se pudo preparar Windows OCR (%s).", type(exc).__name__)
+        unavailable.set()
+        return
+
+    logging.info("[OCR] Windows OCR listo; idioma=%s.", language_tag)
+    ready.set()
+    consecutive_errors = 0
     try:
         while not shutdown.is_set():
+            if shutdown.wait(ANTIMACRO_OCR_INTERVAL):
+                break
             try:
                 frame = frames.get(timeout=0.2)
             except Empty:
                 continue
-            if shutdown.wait(ANTIMACRO_OCR_INTERVAL):
-                break
             try:
                 recognized_text = loop.run_until_complete(
                     recognize_antimacro_header(frame, ocr)
@@ -164,7 +224,17 @@ def _ocr_worker(
                     "[OCR] Error al analizar el aviso anti-macro (%s).",
                     type(exc).__name__,
                 )
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_CONSECUTIVE_OCR_ERRORS:
+                    logging.error(
+                        "[OCR] El monitor se deshabilitó tras %d errores consecutivos.",
+                        consecutive_errors,
+                    )
+                    ready.clear()
+                    unavailable.set()
+                    break
                 continue
+            consecutive_errors = 0
             if detected != detection.is_set():
                 logging.info(
                     "[OCR] Texto 'Antimacro activado' %s.",
@@ -174,18 +244,54 @@ def _ocr_worker(
                 detection.set()
             else:
                 detection.clear()
+            if target_name_results is not None:
+                try:
+                    name_evidence = loop.run_until_complete(
+                        recognize_target_name(frame, ocr)
+                    )
+                except (OSError, RuntimeError, ValueError, cv2.error) as exc:
+                    logging.error(
+                        "[OBJETIVO] No se pudo leer el nombre del objetivo (%s).",
+                        type(exc).__name__,
+                    )
+                else:
+                    try:
+                        target_name_results.put_nowait(name_evidence)
+                    except Full:
+                        try:
+                            target_name_results.get_nowait()
+                        except Empty:
+                            pass
+                        try:
+                            target_name_results.put_nowait(name_evidence)
+                        except Full:
+                            logging.warning(
+                                "[OBJETIVO] No se pudo actualizar la lectura del nombre."
+                            )
     finally:
         loop.close()
+        if not shutdown.is_set():
+            unavailable.set()
 
 
 def start_ocr_worker(
     frames: Queue[np.ndarray],
     detection: threading.Event,
     shutdown: threading.Event,
+    ready: threading.Event,
+    unavailable: threading.Event,
+    target_name_results: Queue[tuple[bytes, bool]] | None = None,
 ) -> threading.Thread:
     thread = threading.Thread(
         target=_ocr_worker,
-        args=(frames, detection, shutdown),
+        args=(
+            frames,
+            detection,
+            shutdown,
+            ready,
+            unavailable,
+            target_name_results,
+        ),
         name="antimacro-ocr",
         daemon=True,
     )

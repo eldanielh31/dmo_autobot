@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import sqlite3
 import threading
 import time
-from queue import Queue
+from collections.abc import Sequence
+from queue import Empty, Queue
 
 from self_update import update_on_start
 
@@ -24,6 +26,7 @@ from antimacro import (
     alarm_worker,
     enqueue_latest_frame,
     is_antimacro_present,
+    is_antimacro_monitor_ready,
     load_antimacro_header,
     load_telegram_credentials,
     save_antimacro_screenshot,
@@ -58,9 +61,9 @@ from game_input import (
     press_key_fast,
     release_all_keys,
     set_cursor_position,
+    sync_keys,
 )
 from telegram_logs import (
-    LONG_POLL_TIMEOUT,
     TelegramCommandListener,
     TelegramEventLog,
     format_local_datetime,
@@ -70,6 +73,7 @@ from target_detection import (
     TargetStatus,
     check_target_status,
     get_banner_preview_rect,
+    get_target_name_signature,
     get_target_bar_preview_rect,
     is_game_menu_open,
 )
@@ -95,6 +99,8 @@ def draw_preview(
     auto_enabled: bool,
     menu_open: bool,
     antimacro_locked: bool,
+    antimacro_monitor_ready: bool,
+    antimacro_monitor_failed: bool,
     window_title: str,
 ) -> np.ndarray:
     preview = frame.copy()
@@ -110,6 +116,10 @@ def draw_preview(
     state_text = (
         "ANTI-MACRO - RESOLVER MANUALMENTE"
         if antimacro_locked
+        else "ANTI-MACRO NO DISPONIBLE - ACCIONES BLOQUEADAS"
+        if antimacro_monitor_failed
+        else "INICIANDO DETECCIÓN ANTI-MACRO"
+        if not antimacro_monitor_ready
         else "MENÚ ABIERTO - CIERRE MANUAL"
         if menu_open
         else controller.state.value
@@ -119,6 +129,10 @@ def draw_preview(
     hp_text = (
         "VIVO"
         if target.has_life
+        else "OTRO OBJETIVO"
+        if target.name_matches is False
+        else "VERIFICANDO NOMBRE"
+        if target.require_name_match and target.name_matches is None
         else "0% / BARRA VACÍA"
         if target.bar_empty
         else "SIN BANNER"
@@ -173,11 +187,17 @@ def send_combat_actions(
     actions: CombatActions,
     client_rect: tuple[int, int, int, int],
     mouse_is_down: bool,
-) -> tuple[bool, bool]:
+    movement_keys_down: set[int],
+) -> tuple[bool, bool, set[int]]:
     attack_inserted = False
     if actions.stop_rotation and mouse_is_down:
         mouse_right_up()
         mouse_is_down = False
+
+    movement_keys_down = sync_keys(
+        movement_keys_down,
+        actions.movement_keys,
+    )
 
     if actions.press_tab:
         press_key_fast(KEY_TAB)
@@ -193,10 +213,25 @@ def send_combat_actions(
 
     if actions.drag_camera and mouse_is_down:
         mouse_drag_relative(CAMERA_DRAG_STEP, 0)
-    return mouse_is_down, attack_inserted
+    return mouse_is_down, attack_inserted, movement_keys_down
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Bot de farmeo para DMO.")
+    parser.add_argument(
+        "--notelegram",
+        action="store_true",
+        help="desactiva los envíos y la recepción de comandos de Telegram",
+    )
+    parser.add_argument(
+        "--metalgreymon-only",
+        action="store_true",
+        help="ataca solo objetivos cuyo banner identifica como MetalGreymon",
+    )
+    args = parser.parse_args(argv)
+    telegram_enabled = not args.notelegram
+    metalgreymon_only = args.metalgreymon_only
+
     configure_logging()
     hwnd = find_window(WINDOW_TITLE_CONTAINS)
     if hwnd is None:
@@ -204,9 +239,13 @@ def main() -> None:
 
     window_title = win32gui.GetWindowText(hwnd)
     logging.info("[CONECTADO] DMO: %s", window_title)
-    load_antimacro_header()
-    telegram_token, telegram_chat_id = load_telegram_credentials()
-    if not telegram_token or not telegram_chat_id:
+    antimacro_template_loaded = load_antimacro_header()
+    telegram_token, telegram_chat_id = (
+        load_telegram_credentials() if telegram_enabled else ("", "")
+    )
+    if not telegram_enabled:
+        logging.info("[TELEGRAM] Desactivado mediante --notelegram.")
+    elif not telegram_token or not telegram_chat_id:
         logging.warning(
             "[TELEGRAM] Sin credenciales configuradas; la captura solo se guardará localmente."
         )
@@ -215,21 +254,28 @@ def main() -> None:
             "[TELEGRAM] Destino de notificaciones configurado: chat_id=%s",
             telegram_chat_id,
         )
+    if metalgreymon_only:
+        logging.info(
+            "[OBJETIVO] Filtro MetalGreymon activo; los demás objetivos se omitirán."
+        )
 
     controller = CombatController()
     menu_confirmation = MenuOpenConfirmation()
     mouse_is_down = False
+    movement_keys_down: set[int] = set()
     auto_enabled = True
     menu_was_open = False
     antimacro_locked = False
     antimacro_clear_since: float | None = None
     state_started_at = time.time()
-    last_target_log: tuple[bool, bool, bool] | None = None
+    last_target_log: tuple[bool, bool, bool, bool | None] | None = None
     last_status_log = 0.0
     attack_inputs_since_status = 0
     pause_hotkey_was_down = False
     stop_hotkey_was_down = False
     focus_warning_shown = False
+    focus_lost_active = False
+    antimacro_monitor_blocked = False
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     logging.info("[ATAJOS] %s", HOTKEYS_MESSAGE)
@@ -238,7 +284,12 @@ def main() -> None:
     alarm_shutdown = threading.Event()
     ocr_shutdown = threading.Event()
     ocr_detection = threading.Event()
+    ocr_ready = threading.Event()
+    ocr_unavailable = threading.Event()
     ocr_frames: Queue[np.ndarray] = Queue(maxsize=1)
+    target_name_results: Queue[tuple[bytes, bool]] | None = (
+        Queue(maxsize=1) if metalgreymon_only else None
+    )
     alarm_thread = threading.Thread(
         target=alarm_worker,
         args=(alarm_active, alarm_shutdown),
@@ -246,12 +297,19 @@ def main() -> None:
         daemon=True,
     )
     alarm_thread.start()
-    ocr_thread = start_ocr_worker(ocr_frames, ocr_detection, ocr_shutdown)
+    start_ocr_worker(
+        ocr_frames,
+        ocr_detection,
+        ocr_shutdown,
+        ocr_ready,
+        ocr_unavailable,
+        target_name_results,
+    )
 
     telegram_event_log: TelegramEventLog | None = None
     telegram_command_shutdown: threading.Event | None = None
     telegram_command_thread: threading.Thread | None = None
-    if telegram_token and telegram_chat_id:
+    if telegram_enabled and telegram_token and telegram_chat_id:
         try:
             telegram_event_log = TelegramEventLog()
             command_listener = TelegramCommandListener(
@@ -277,6 +335,9 @@ def main() -> None:
     startup_notification_sent = False
     capture_warning_active = False
     last_frame: np.ndarray | None = None
+    interrupted_by_user = False
+    latest_target_name_evidence: tuple[bytes, bool] | None = None
+    target_name_ocr_warning_shown = False
     try:
         with mss.MSS() as sct:
             while True:
@@ -298,6 +359,8 @@ def main() -> None:
                     if mouse_is_down:
                         mouse_right_up()
                         mouse_is_down = False
+                    release_all_keys()
+                    movement_keys_down.clear()
                     logging.info("[PAUSADO]" if not auto_enabled else "[REANUDADO]")
                 pause_hotkey_was_down = pause_hotkey_down
                 stop_hotkey_was_down = stop_hotkey_down
@@ -327,6 +390,7 @@ def main() -> None:
                             mouse_right_up()
                             mouse_is_down = False
                         release_all_keys()
+                        movement_keys_down.clear()
                         controller.reset_search()
                         state_started_at = time.time()
                         capture_warning_active = True
@@ -337,8 +401,45 @@ def main() -> None:
                     capture_warning_active = False
                 frame = cv2.cvtColor(raw_screen, cv2.COLOR_BGRA2BGR)
                 last_frame = frame
+                antimacro_monitor_ready = is_antimacro_monitor_ready(
+                    antimacro_template_loaded,
+                    ocr_ready,
+                    ocr_unavailable,
+                )
+                antimacro_monitor_failed = (
+                    not antimacro_template_loaded and ocr_unavailable.is_set()
+                )
+                if not antimacro_monitor_ready:
+                    if not antimacro_monitor_blocked:
+                        if antimacro_monitor_failed:
+                            logging.error(
+                                "[ANTI-MACRO] No hay OCR disponible ni plantilla "
+                                "de detección; las acciones del juego permanecerán "
+                                "bloqueadas."
+                            )
+                        else:
+                            logging.info(
+                                "[ANTI-MACRO] Esperando a que Windows OCR esté listo; "
+                                "las acciones del juego están bloqueadas."
+                            )
+                        if mouse_is_down:
+                            mouse_right_up()
+                            mouse_is_down = False
+                        release_all_keys()
+                        movement_keys_down.clear()
+                        controller.reset_search()
+                        state_started_at = now
+                        antimacro_monitor_blocked = True
+                elif antimacro_monitor_blocked:
+                    logging.info(
+                        "[ANTI-MACRO] Monitor disponible; reanudando búsqueda."
+                    )
+                    antimacro_monitor_blocked = False
+                    controller.reset_search()
+                    state_started_at = now
                 if (
                     not startup_notification_sent
+                    and telegram_enabled
                     and telegram_token
                     and telegram_chat_id
                 ):
@@ -372,7 +473,8 @@ def main() -> None:
                             mouse_right_up()
                             mouse_is_down = False
                         release_all_keys()
-                        if telegram_token and telegram_chat_id:
+                        movement_keys_down.clear()
+                        if telegram_enabled and telegram_token and telegram_chat_id:
                             threading.Thread(
                                 target=send_telegram_photo,
                                 args=(
@@ -392,7 +494,7 @@ def main() -> None:
                             window_title,
                             screenshot_path or "no disponible",
                         )
-                        if telegram_token and telegram_chat_id:
+                        if telegram_enabled and telegram_token and telegram_chat_id:
                             if telegram_event_log:
                                 telegram_event_log.record(
                                     "anti-macro",
@@ -427,18 +529,56 @@ def main() -> None:
                 else:
                     target = check_target_status(frame)
                     menu_open = menu_confirmation.update(is_game_menu_open(frame))
+                if target_name_results is not None:
+                    try:
+                        while True:
+                            latest_target_name_evidence = (
+                                target_name_results.get_nowait()
+                            )
+                    except Empty:
+                        pass
+                    if ocr_unavailable.is_set() and not target_name_ocr_warning_shown:
+                        logging.error(
+                            "[OBJETIVO] No se puede verificar MetalGreymon porque "
+                            "Windows OCR no está disponible; no se atacará ningún objetivo."
+                        )
+                        target_name_ocr_warning_shown = True
+                    current_name_signature = get_target_name_signature(frame)
+                    name_matches = (
+                        latest_target_name_evidence[1]
+                        if latest_target_name_evidence is not None
+                        and latest_target_name_evidence[0] == current_name_signature
+                        else None
+                    )
+                    target = TargetStatus(
+                        banner_visible=target.banner_visible,
+                        red_pixels=target.red_pixels,
+                        name_matches=name_matches,
+                        require_name_match=True,
+                    )
 
                 target_log = (
                     target.banner_visible,
                     target.has_life,
                     target.bar_empty,
+                    target.name_matches if metalgreymon_only else None,
                 )
                 if target_log != last_target_log:
                     logging.info(
-                        "[OBJETIVO] banner=%s; vida=%s; barra_vacía=%s; píxeles_rojos=%d",
+                        "[OBJETIVO] banner=%s; vida=%s; barra_vacía=%s; "
+                        "filtro_MetalGreymon=%s; píxeles_rojos=%d",
                         "visible" if target.banner_visible else "no visible",
                         "detectada" if target.has_life else "no detectada",
                         "sí" if target.bar_empty else "no",
+                        (
+                            "coincide"
+                            if target.name_matches is True
+                            else "no coincide"
+                            if target.name_matches is False
+                            else "OCR pendiente"
+                        )
+                        if metalgreymon_only
+                        else "desactivado",
                         target.red_pixels,
                     )
                     last_target_log = target_log
@@ -453,6 +593,8 @@ def main() -> None:
                     if mouse_is_down:
                         mouse_right_up()
                         mouse_is_down = False
+                    release_all_keys()
+                    movement_keys_down.clear()
                     menu_was_open = True
                 else:
                     if menu_was_open:
@@ -460,38 +602,69 @@ def main() -> None:
                         state_started_at = now
                     menu_was_open = False
 
-                if not antimacro_locked and auto_enabled and not menu_open:
-                    if win32gui.GetForegroundWindow() != hwnd:
+                if (
+                    antimacro_monitor_ready
+                    and not antimacro_locked
+                    and auto_enabled
+                    and not menu_open
+                ):
+                    game_focused = win32gui.GetForegroundWindow() == hwnd
+                    if not game_focused:
                         try:
-                            focus_set = bool(win32gui.SetForegroundWindow(hwnd))
-                            if not focus_set and not focus_warning_shown:
-                                logging.warning(
-                                    "[VENTANA] Windows no confirmó el foco del juego."
-                                )
-                            focus_warning_shown = not focus_set
+                            win32gui.SetForegroundWindow(hwnd)
                         except Exception as exc:
                             if not focus_warning_shown:
                                 logging.warning(
                                     "[VENTANA] No se pudo dar foco al juego: %s", exc
                                 )
                                 focus_warning_shown = True
+                        game_focused = win32gui.GetForegroundWindow() == hwnd
 
-                    previous_state = controller.state
-                    actions = controller.update(target, now)
-                    mouse_is_down, attack_inserted = send_combat_actions(
-                        actions,
-                        client_rect,
-                        mouse_is_down,
-                    )
-                    if attack_inserted:
-                        attack_inputs_since_status += 1
-                    if controller.state is not previous_state:
-                        state_started_at = now
-                        logging.info(
-                            "[ESTADO] %s -> %s",
-                            previous_state.value,
-                            controller.state.value,
+                    if not game_focused:
+                        if not focus_warning_shown:
+                            logging.warning(
+                                "[VENTANA] El juego no tiene el foco; "
+                                "se suspenden las acciones hasta recuperarlo."
+                            )
+                            focus_warning_shown = True
+                        if not focus_lost_active:
+                            if mouse_is_down:
+                                mouse_right_up()
+                                mouse_is_down = False
+                            release_all_keys()
+                            movement_keys_down.clear()
+                            controller.reset_search()
+                            state_started_at = now
+                            focus_lost_active = True
+                    else:
+                        if focus_lost_active:
+                            logging.info(
+                                "[VENTANA] Foco del juego recuperado; "
+                                "reiniciando la búsqueda."
+                            )
+                            focus_lost_active = False
+                        focus_warning_shown = False
+                        previous_state = controller.state
+                        actions = controller.update(target, now)
+                        (
+                            mouse_is_down,
+                            attack_inserted,
+                            movement_keys_down,
+                        ) = send_combat_actions(
+                            actions,
+                            client_rect,
+                            mouse_is_down,
+                            movement_keys_down,
                         )
+                        if attack_inserted:
+                            attack_inputs_since_status += 1
+                        if controller.state is not previous_state:
+                            state_started_at = now
+                            logging.info(
+                                "[ESTADO] %s -> %s",
+                                previous_state.value,
+                                controller.state.value,
+                            )
 
                 if now - last_status_log >= STATUS_LOG_INTERVAL:
                     logging.info(
@@ -524,6 +697,8 @@ def main() -> None:
                     auto_enabled,
                     menu_open,
                     antimacro_locked,
+                    antimacro_monitor_ready,
+                    antimacro_monitor_failed,
                     window_title,
                 )
                 cv2.imshow(WINDOW_NAME, preview)
@@ -533,6 +708,9 @@ def main() -> None:
                 frame_time = 1.0 / MAX_FPS
                 if elapsed < frame_time:
                     time.sleep(frame_time - elapsed)
+    except KeyboardInterrupt:
+        interrupted_by_user = True
+        logging.info("[DETENIDO] Ctrl+C.")
     finally:
         if mouse_is_down:
             mouse_right_up()
@@ -540,14 +718,15 @@ def main() -> None:
         alarm_active.clear()
         alarm_shutdown.set()
         ocr_shutdown.set()
-        alarm_thread.join(timeout=1.0)
-        ocr_thread.join(timeout=2.0)
         if telegram_command_shutdown:
             telegram_command_shutdown.set()
-        if telegram_command_thread:
-            telegram_command_thread.join(timeout=LONG_POLL_TIMEOUT + 5)
         cv2.destroyAllWindows()
-        if telegram_token and telegram_chat_id:
+        if (
+            not interrupted_by_user
+            and telegram_enabled
+            and telegram_token
+            and telegram_chat_id
+        ):
             message = (
                 "🔴 Macro cerrado\n"
                 f"Hora: {format_local_datetime()}"

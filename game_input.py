@@ -98,6 +98,28 @@ def release_all_keys() -> None:
             logging.error("[ENTRADA] No se pudo liberar scan code 0x%02X.", scan_code)
 
 
+def sync_keys(current_keys: set[int], desired_keys: tuple[int, ...]) -> set[int]:
+    desired = set(desired_keys)
+    held = set(current_keys)
+    for scan_code in current_keys - desired:
+        if key_up(scan_code):
+            held.discard(scan_code)
+        else:
+            logging.error(
+                "[ENTRADA] No se pudo liberar scan code 0x%02X.",
+                scan_code,
+            )
+    for scan_code in desired - current_keys:
+        if key_down(scan_code):
+            held.add(scan_code)
+        else:
+            logging.error(
+                "[ENTRADA] No se pudo presionar scan code 0x%02X.",
+                scan_code,
+            )
+    return held
+
+
 def is_key_down(virtual_key: int) -> bool:
     return bool(ctypes.windll.user32.GetAsyncKeyState(virtual_key) & 0x8000)
 
